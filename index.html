@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Recetario · En-Torno</title>
+<meta name="theme-color" content="#2C5A45">
+<link rel="manifest" href="manifest.json">
+
+<!-- iOS: instalable vía Compartir -> Añadir a pantalla de inicio, y se ejecuta a pantalla completa -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Recetario">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<link rel="apple-touch-icon" sizes="120x120" href="assets/icons/apple-touch-icon-120.png">
+<link rel="apple-touch-icon" sizes="152x152" href="assets/icons/apple-touch-icon-152.png">
+<link rel="apple-touch-icon" sizes="167x167" href="assets/icons/apple-touch-icon-167.png">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="assets/icons/favicon-16.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app"></div>
+<div id="install-tip" class="install-tip" hidden>
+  <div class="install-tip-card">
+    <button class="install-tip-close" id="install-tip-close" aria-label="Cerrar">✕</button>
+    <div class="install-tip-title">Instala Recetario en tu iPhone</div>
+    <div class="install-tip-body">
+      Toca Compartir en la barra de Safari y luego
+      <strong>“Añadir a pantalla de inicio”</strong>.
+    </div>
+  </div>
+</div>
+<input type="file" id="fotoInput" accept="image/*" capture="environment" hidden>
+<script src="assets/vendor/xlsx.mini.min.js"></script>
+<script src="app.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+
+// Avisa una vez a los usuarios de iOS Safari para que añadan la app a inicio — iOS no tiene banner nativo de instalación.
+(function () {
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isStandalone = window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+  const tip = document.getElementById('install-tip');
+  if (!isIos || isStandalone || !tip) return;
+  if (localStorage.getItem('installTipDismissed') === '1') return;
+  setTimeout(() => { tip.hidden = false; }, 1500);
+  document.getElementById('install-tip-close').addEventListener('click', () => {
+    tip.hidden = true;
+    localStorage.setItem('installTipDismissed', '1');
+  });
+})();
+</script>
+</body>
+</html>
