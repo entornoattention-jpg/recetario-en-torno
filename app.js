@@ -289,47 +289,160 @@
     if (totalesEl) totalesEl.innerHTML = renderCalcTotales(res, modo);
   }
 
-  // Genera una ficha imprimible con los datos de la calculadora y abre el
-  // diálogo de impresión del sistema — en iPhone, "Imprimir" permite guardar
-  // directamente como PDF sin necesidad de ninguna librería adicional.
-  function exportCalcPdf() {
+  // Genera un PDF real en el dispositivo (jsPDF) con los datos de la calculadora
+  // y lo comparte/descarga igual que el Excel. No usamos window.print(): en una
+  // PWA instalada en la pantalla de inicio del iPhone (modo standalone), iOS no
+  // ofrece el diálogo de impresión — window.print() simplemente no hace nada ahí.
+  async function exportCalcPdf() {
     syncCalcFromDOM();
     const c = state.calc;
     const filasValidas = c.filas.filter((f) => f.material && f.material.trim());
     if (!filasValidas.length) { showToast('Añade al menos un ingrediente'); return; }
+    if (!window.jspdf || !window.jspdf.jsPDF) { showToast('No se pudo cargar el generador de PDF'); return; }
     const res = computeCalcResults(c.modo, c.lote, c.filas);
     const receta = c.recetaId ? state.recetas.find((r) => r.id === c.recetaId) : null;
-    const modoLabel = c.modo === 'pct2g' ? '% → gramos' : 'Gramos → %';
+    const modoLabel = c.modo === 'pct2g' ? '% -> gramos' : 'Gramos -> %';
     const colValor = c.modo === 'pct2g' ? '%' : 'Gramos';
     const colResultado = c.modo === 'pct2g' ? 'Gramos' : '%';
-    const rows = c.filas.map((f, i) => {
-      if (!f.material || !f.material.trim()) return '';
-      const r = res.rows[i];
-      const resultado = r && r.resultado != null ? r.resultado : '—';
-      const valor = f.valor === '' || f.valor == null ? '—' : f.valor;
-      return `<tr><td>${esc(f.material)}</td><td>${valor}</td><td>${resultado}</td></tr>`;
-    }).join('');
-    const fecha = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
     const totalResultadoLabel = res.totalResultado == null ? '—' : res.totalResultado + (c.modo === 'pct2g' ? ' g' : ' %');
-    const printArea = document.getElementById('print-area');
-    printArea.innerHTML = `
-      <div class="print-head">
-        <img class="print-logo" src="assets/en-torno-logo.jpg" alt="">
-        <div>
-          <div class="print-brand">En-Torno · Taller</div>
-          <div class="print-title">Ficha de cálculo (${modoLabel})</div>
-        </div>
-      </div>
-      ${receta ? `<div class="print-sub"><strong>Receta:</strong> ${esc(receta.nombre)}</div>` : ''}
-      ${c.modo === 'pct2g' ? `<div class="print-sub"><strong>Tamaño del lote:</strong> ${c.lote || '—'} g</div>` : ''}
-      <table class="print-table">
-        <thead><tr><th>Material</th><th>${colValor}</th><th>${colResultado}</th></tr></thead>
-        <tbody>${rows}</tbody>
-        <tfoot><tr><td>Total</td><td>${res.totalValor}${c.modo === 'pct2g' ? '%' : ' g'}</td><td>${totalResultadoLabel}</td></tr></tfoot>
-      </table>
-      <div class="print-date">Generado el ${fecha}</div>
-    `;
-    window.print();
+
+    const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4' });
+    const left = 20, right = 190;
+    let y = 24;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(130, 120, 100);
+    doc.text('EN-TORNO · TALLER', left, y);
+    y += 9;
+    doc.setFontSize(18);
+    doc.setTextColor(30, 26, 22);
+    doc.text(`Ficha de calculo (${modoLabel})`, left, y);
+    y += 4;
+    doc.setDrawColor(30, 26, 22);
+    doc.setLineWidth(0.6);
+    doc.line(left, y, right, y);
+    y += 9;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.setTextColor(50, 44, 38);
+    if (receta) { doc.text(`Receta: ${receta.nombre}`, left, y); y += 6.5; }
+    if (c.modo === 'pct2g') { doc.text(`Tamano del lote: ${c.lote || '—'} g`, left, y); y += 6.5; }
+    y += 3;
+
+    const col2 = 135, col3 = 165;
+    doc.setFillColor(238, 232, 220);
+    doc.rect(left, y - 5, right - left, 8, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(30, 26, 22);
+    doc.text('Material', left + 2, y);
+    doc.text(colValor, col2, y);
+    doc.text(colResultado, col3, y);
+    y += 8;
+
+    doc.setFont('helvetica', 'normal');
+    filasValidas.forEach((f) => {
+      if (y > 275) { doc.addPage(); y = 24; }
+      const idx = c.filas.indexOf(f);
+      const r = res.rows[idx];
+      const resultado = r && r.resultado != null ? String(r.resultado) : '—';
+      const valor = f.valor === '' || f.valor == null ? '—' : String(f.valor);
+      doc.setDrawColor(225, 217, 200);
+      doc.setLineWidth(0.2);
+      doc.line(left, y - 5, right, y - 5);
+      doc.text(String(f.material), left + 2, y);
+      doc.text(valor, col2, y);
+      doc.text(resultado, col3, y);
+      y += 7;
+    });
+
+    y += 1;
+    doc.setDrawColor(30, 26, 22);
+    doc.setLineWidth(0.5);
+    doc.line(left, y - 5, right, y - 5);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Total', left + 2, y);
+    doc.text(`${res.totalValor}${c.modo === 'pct2g' ? '%' : ' g'}`, col2, y);
+    doc.text(totalResultadoLabel, col3, y);
+    y += 14;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(150, 140, 120);
+    const fecha = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
+    doc.text(`Generado el ${fecha}`, left, y);
+
+    const blob = doc.output('blob');
+    const filename = `calculo-en-torno-${new Date().toISOString().slice(0, 10)}.pdf`;
+    await shareOrDownloadFile(blob, filename);
+  }
+
+  // Guarda la calculadora actual como una receta nueva del recetario, con el
+  // nombre que indique el usuario. En modo % -> gramos usa directamente los %
+  // introducidos; en modo gramos -> % usa el % ya calculado a partir del peso.
+  async function saveCalcAsRecipe() {
+    syncCalcFromDOM();
+    const c = state.calc;
+    const filasValidas = c.filas.filter((f) => f.material && f.material.trim());
+    if (!filasValidas.length) { showToast('Añade al menos un ingrediente'); return; }
+    const origen = c.recetaId ? state.recetas.find((r) => r.id === c.recetaId) : null;
+    const nombreSugerido = origen ? `${origen.nombre} (copia)` : '';
+    const nombre = prompt('Nombre para la nueva receta:', nombreSugerido);
+    if (!nombre || !nombre.trim()) return;
+
+    const res = computeCalcResults(c.modo, c.lote, c.filas);
+    const ingredientes = c.filas.map((f, i) => {
+      if (!f.material || !f.material.trim()) return null;
+      let porcentaje;
+      if (c.modo === 'pct2g') {
+        porcentaje = f.valor === '' || f.valor == null ? '' : parseFloat(f.valor);
+      } else {
+        const r = res.rows[i];
+        porcentaje = r && r.resultado != null ? r.resultado : '';
+      }
+      return { material: f.material.trim(), porcentaje };
+    }).filter(Boolean);
+
+    const now = new Date().toISOString();
+    const recipe = {
+      id: uid(),
+      nombre: nombre.trim(),
+      tipo: origen ? origen.tipo : 'esmalte',
+      cono: origen ? origen.cono : '',
+      atmosfera: origen ? origen.atmosfera : '',
+      color: origen ? origen.color : '',
+      acabado: origen ? origen.acabado : '',
+      opacidad: origen ? origen.opacidad : '',
+      ingredientes,
+      etiquetas: [],
+      notas: '',
+      fotoDataUrl: null,
+      creado: now,
+      actualizado: now,
+    };
+    await idbPut(recipe);
+    state.recetas.unshift(recipe);
+    state.recetas.sort((a, b) => (b.actualizado || '').localeCompare(a.actualizado || ''));
+    state.section = 'recetario';
+    state.viewId = recipe.id;
+    state.tab = 'detalle';
+    showToast('Receta guardada');
+  }
+
+  // Comparte el archivo (hoja de cálculo hace uso de esto en iOS: Compartir -> Guardar
+  // en Archivos) o, si el dispositivo no soporta compartir ficheros, lo descarga.
+  async function shareOrDownloadFile(blob, filename) {
+    const file = new File([blob], filename, { type: blob.type });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: filename }); return; } catch (e) { /* el usuario canceló o falló: probamos descarga directa */ }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
   }
 
   // ---- export to Excel (una fila por receta) -------------------------------
@@ -361,16 +474,7 @@
     const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const filename = `recetario-en-torno-${new Date().toISOString().slice(0, 10)}.xlsx`;
-    const file = new File([blob], filename, { type: blob.type });
-
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: filename }); return; } catch (e) { /* el usuario canceló o falló: probamos descarga directa */ }
-    }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    await shareOrDownloadFile(blob, filename);
   }
 
   // ---- render: helpers -----------------------------------------------------
@@ -642,6 +746,7 @@
 
         <div class="panel" id="calcTotales">${renderCalcTotales(res, c.modo)}</div>
 
+        <button type="button" class="btn-primary" data-act="calc-guardar-receta">${icon('book')}<span>Guardar como receta</span></button>
         <button type="button" class="export-btn" data-act="calc-exportar-pdf">${icon('printer')}<span>Exportar a PDF</span></button>
         <div style="height:24px"></div>
       </div>
@@ -730,7 +835,8 @@
       return render();
     }
     if (act === 'calc-limpiar') { state.calc = blankCalc(); return render(); }
-    if (act === 'calc-exportar-pdf') return exportCalcPdf();
+    if (act === 'calc-exportar-pdf') return void exportCalcPdf();
+    if (act === 'calc-guardar-receta') return void saveCalcAsRecipe().then(render);
 
     if (act === 'nueva-receta') return goNewRecipe();
     if (act === 'ver-receta') { state.viewId = el.dataset.id; state.tab = 'detalle'; return render(); }

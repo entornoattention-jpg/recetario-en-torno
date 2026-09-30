@@ -1,4 +1,4 @@
-const CACHE = 'recetario-v4';
+const CACHE = 'recetario-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -7,6 +7,7 @@ const ASSETS = [
   './manifest.json',
   './assets/en-torno-logo.jpg',
   './assets/vendor/xlsx.mini.min.js',
+  './assets/vendor/jspdf.umd.min.js',
   './assets/icons/icon-192.png',
   './assets/icons/icon-512.png',
   './assets/icons/apple-touch-icon-180.png',
