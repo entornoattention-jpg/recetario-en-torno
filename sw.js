@@ -1,4 +1,4 @@
-const CACHE = 'recetario-v1';
+const CACHE = 'recetario-v2';
 const ASSETS = [
   './',
   './index.html',

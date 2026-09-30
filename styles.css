@@ -201,6 +201,14 @@ body{
 
 .form-actions{display:flex;gap:9px;padding-top:4px}
 
+/* ---- calculadora ------------------------------------------------------ */
+.calc-row{display:flex;align-items:center;gap:6px}
+.calc-material.calc-material{flex:1;min-width:0;width:auto;height:44px}
+.calc-valor.calc-valor{flex:none;width:58px;height:44px;text-align:right;padding:0 8px}
+.calc-result{flex:none;min-width:58px;height:44px;border-radius:12px;background:var(--alt);display:flex;align-items:center;justify-content:center;font:700 12px/1 'IBM Plex Mono',monospace;color:var(--ink-soft);padding:0 6px;text-align:center}
+.calc-del{flex:none;width:36px;height:36px;border-radius:11px;background:var(--alt);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--red)}
+.calc-del svg{width:14px;height:14px}
+
 /* ---- toast ------------------------------------------------------------ */
 .toast{position:absolute;top:14px;left:14px;right:14px;z-index:90;background:var(--dark);border-radius:18px;padding:14px 16px;display:flex;gap:12px;align-items:center;box-shadow:0 10px 30px rgba(26,46,37,.28)}
 .toast-body{font:500 13px/1.35 Archivo,sans-serif;color:#F6F1E8;flex:1}

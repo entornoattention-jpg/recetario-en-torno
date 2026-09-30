@@ -14,6 +14,8 @@
     x: '<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>',
     upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line>',
     image: '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline>',
+    book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>',
+    percent: '<line x1="19" y1="5" x2="5" y2="19"></line><circle cx="6.5" cy="6.5" r="2.5"></circle><circle cx="17.5" cy="17.5" r="2.5"></circle>',
   };
   function icon(name, cls) {
     return `<svg class="${cls || ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name] || ''}</svg>`;
@@ -31,6 +33,12 @@
   const blankForm = () => ({
     id: null, nombre: '', tipo: 'esmalte', cono: '', atmosfera: '', color: '', acabado: '', opacidad: '',
     ingredientes: [{ material: '', porcentaje: '' }], etiquetas: [], notas: '', fotoDataUrl: null,
+  });
+  const blankCalc = () => ({
+    modo: 'pct2g', // 'pct2g' (% -> gramos) | 'g2pct' (gramos -> %)
+    recetaId: '',
+    lote: '',
+    filas: [{ material: '', valor: '' }],
   });
 
   // ---- persistence: IndexedDB (recipes can carry photos, too big for localStorage) --
@@ -95,6 +103,7 @@
 
   // ---- state -----------------------------------------------------------
   const state = {
+    section: 'recetario', // 'recetario' | 'calculadora'
     tab: 'lista', // 'lista' | 'detalle' | 'form'
     recetas: [],
     query: '',
@@ -102,6 +111,7 @@
     filtroTag: null,
     viewId: null,
     form: null,
+    calc: blankCalc(),
     toast: null,
   };
   let toastTimer = null;
@@ -223,6 +233,59 @@
     render();
     const inp2 = document.getElementById('tagInput');
     if (inp2) inp2.focus();
+  }
+
+  // ---- calculadora de porcentajes ------------------------------------------
+  // Pura: dado el modo, el lote (solo relevante en pct2g) y las filas {material, valor},
+  // devuelve el resultado calculado por fila y los totales. La usan tanto el render
+  // inicial como el recálculo en vivo mientras se escribe (sin re-renderizar).
+  function computeCalcResults(modo, lote, filas) {
+    const loteNum = parseFloat(lote);
+    if (modo === 'pct2g') {
+      const totalPct = filas.reduce((s, f) => { const v = parseFloat(f.valor); return s + (isNaN(v) ? 0 : v); }, 0);
+      const rows = filas.map((f) => {
+        const v = parseFloat(f.valor);
+        const g = (!isNaN(v) && !isNaN(loteNum)) ? Math.round((v / 100) * loteNum * 10) / 10 : null;
+        return { resultado: g };
+      });
+      return { rows, totalValor: Math.round(totalPct * 10) / 10, totalResultado: !isNaN(loteNum) ? Math.round(loteNum * 10) / 10 : null };
+    }
+    const totalG = filas.reduce((s, f) => { const v = parseFloat(f.valor); return s + (isNaN(v) ? 0 : v); }, 0);
+    const rows = filas.map((f) => {
+      const v = parseFloat(f.valor);
+      const p = (!isNaN(v) && totalG > 0) ? Math.round((v / totalG) * 100 * 10) / 10 : null;
+      return { resultado: p };
+    });
+    return { rows, totalValor: Math.round(totalG * 10) / 10, totalResultado: totalG > 0 ? 100 : null };
+  }
+
+  function syncCalcFromDOM() {
+    const c = state.calc;
+    const loteEl = document.getElementById('calcLote');
+    if (loteEl) c.lote = loteEl.value;
+    const materials = Array.from(document.querySelectorAll('.calc-material'));
+    const valores = Array.from(document.querySelectorAll('.calc-valor'));
+    if (materials.length) {
+      c.filas = materials.map((m, i) => ({ material: m.value, valor: valores[i] ? valores[i].value : '' }));
+    }
+  }
+
+  // Recalcula y repinta solo los resultados/totales en vivo mientras se escribe,
+  // sin re-renderizar el formulario (para no perder el foco del campo activo).
+  function recalcCalcUI() {
+    const modo = state.calc.modo;
+    const loteEl = document.getElementById('calcLote');
+    const lote = loteEl ? loteEl.value : '';
+    const materials = Array.from(document.querySelectorAll('.calc-material'));
+    const valores = Array.from(document.querySelectorAll('.calc-valor'));
+    const filas = materials.map((m, i) => ({ material: m.value, valor: valores[i] ? valores[i].value : '' }));
+    const res = computeCalcResults(modo, lote, filas);
+    document.querySelectorAll('.calc-result').forEach((span, i) => {
+      const val = res.rows[i] ? res.rows[i].resultado : null;
+      span.textContent = val == null ? '—' : val + (modo === 'pct2g' ? ' g' : ' %');
+    });
+    const totalesEl = document.getElementById('calcTotales');
+    if (totalesEl) totalesEl.innerHTML = renderCalcTotales(res, modo);
   }
 
   // ---- export to Excel (una fila por receta) -------------------------------
@@ -476,14 +539,86 @@
     return `<div class="toast"><div class="toast-body">${esc(state.toast)}</div><button class="toast-close" data-act="toast-close">✕</button></div>`;
   }
 
+  function renderCalcTotales(res, modo) {
+    if (modo === 'pct2g') {
+      const pctOk = Math.abs(res.totalValor - 100) < 0.51;
+      return `
+        <div class="kv-row"><span class="kv-label">Total %</span><span class="kv-value" style="color:${pctOk ? 'var(--green)' : 'var(--sandd)'}">${res.totalValor}%</span></div>
+        <div class="kv-row"><span class="kv-label">Total del lote</span><span class="kv-value">${res.totalResultado == null ? '—' : res.totalResultado + ' g'}</span></div>
+      `;
+    }
+    return `<div class="kv-row"><span class="kv-label">Total pesado</span><span class="kv-value">${res.totalValor} g</span></div>`;
+  }
+
+  function renderCalculadora(s) {
+    const c = s.calc;
+    const res = computeCalcResults(c.modo, c.lote, c.filas);
+    const rows = c.filas.map((f, i) => {
+      const r = res.rows[i];
+      const resultado = r && r.resultado != null ? r.resultado + (c.modo === 'pct2g' ? ' g' : ' %') : '—';
+      return `
+        <div class="calc-row">
+          <input class="form-input calc-material" placeholder="Material" value="${esc(f.material)}">
+          <input class="form-input calc-valor" type="number" inputmode="decimal" step="0.1" min="0" placeholder="${c.modo === 'pct2g' ? '%' : 'g'}" value="${f.valor === '' || f.valor == null ? '' : f.valor}">
+          <span class="calc-result">${resultado}</span>
+          <button type="button" class="calc-del" data-act="calc-del-fila" data-idx="${i}">${icon('x')}</button>
+        </div>`;
+    }).join('');
+    const recetaOptions = `<option value="">— Receta en blanco —</option>` + s.recetas.map((r) => `<option value="${r.id}"${c.recetaId === r.id ? ' selected' : ''}>${esc(r.nombre)}</option>`).join('');
+    return `
+      <div class="hdr">
+        <div>
+          <div class="eyebrow">Herramienta</div>
+          <div class="title-serif">Calculadora</div>
+        </div>
+        <button class="hdr-btn" data-act="calc-limpiar" title="Limpiar">${icon('x')}</button>
+      </div>
+      <div class="stack" style="padding-top:14px;gap:16px">
+        <div class="seg-row">
+          <button type="button" class="seg-btn${c.modo === 'pct2g' ? ' active' : ''}" data-act="calc-set-modo" data-val="pct2g">% → gramos</button>
+          <button type="button" class="seg-btn${c.modo === 'g2pct' ? ' active' : ''}" data-act="calc-set-modo" data-val="g2pct">Gramos → %</button>
+        </div>
+
+        <div class="form-section">
+          <span class="form-label">Partir de</span>
+          <select class="form-select" id="calcRecetaSelect">${recetaOptions}</select>
+        </div>
+
+        ${c.modo === 'pct2g' ? `
+        <div class="form-section">
+          <span class="form-label">Tamaño del lote (g)</span>
+          <input class="form-input" id="calcLote" type="number" inputmode="decimal" step="1" min="0" placeholder="ej. 2000" value="${c.lote === '' || c.lote == null ? '' : c.lote}">
+        </div>` : ''}
+
+        <div class="form-section">
+          <span class="form-label">Ingredientes</span>
+          ${rows}
+          <button type="button" class="ing-add-btn" data-act="calc-add-fila">${icon('plus')}<span>Añadir ingrediente</span></button>
+        </div>
+
+        <div class="panel" id="calcTotales">${renderCalcTotales(res, c.modo)}</div>
+        <div style="height:24px"></div>
+      </div>
+    `;
+  }
+
+  function renderTabbar() {
+    return `
+      <button type="button" class="tab-btn${state.section === 'recetario' ? ' active' : ''}" data-act="set-section" data-section="recetario">${icon('book')}<span class="label">Recetario</span></button>
+      <button type="button" class="tab-btn${state.section === 'calculadora' ? ' active' : ''}" data-act="set-section" data-section="calculadora">${icon('percent')}<span class="label">Calculadora</span></button>
+    `;
+  }
+
   // ---- main render -------------------------------------------------------
   const app = document.getElementById('app');
   app.innerHTML = `
     <div class="phone">
       <div class="brand-bar"><img src="assets/en-torno-logo.jpg" alt=""><span>En-Torno</span></div>
       <div class="screen" id="screen"></div>
+      <div class="tabbar" id="tabbarSlot"></div>
     </div>`;
   const screenEl = document.getElementById('screen');
+  const tabbarSlot = document.getElementById('tabbarSlot');
 
   function render() {
     // preserve focus/caret across full re-renders triggered by typing (e.g. search box)
@@ -494,11 +629,13 @@
     const scrollTop = screenEl.scrollTop;
 
     let body;
-    if (state.tab === 'detalle') body = renderDetalle(state);
+    if (state.section === 'calculadora') body = renderCalculadora(state);
+    else if (state.tab === 'detalle') body = renderDetalle(state);
     else if (state.tab === 'form') body = renderForm(state.form);
     else body = renderLista(state);
 
     screenEl.innerHTML = renderToast() + body;
+    tabbarSlot.innerHTML = renderTabbar();
     screenEl.scrollTop = scrollTop;
 
     if (activeId) {
@@ -534,6 +671,19 @@
     // Any click while editing may trigger a re-render that rebuilds the form's
     // HTML from state.form — sync first so nothing typed gets lost.
     if (state.tab === 'form' && state.form && act !== 'volver' && act !== 'guardar-receta') syncFormFromDOM();
+    // Same idea for the calculator: a structural click (add/del row, change mode...)
+    // re-renders the rows from state.calc, so capture whatever's typed first.
+    if (state.section === 'calculadora' && act !== 'calc-limpiar') syncCalcFromDOM();
+
+    if (act === 'set-section') { state.section = el.dataset.section; return render(); }
+    if (act === 'calc-set-modo') { state.calc.modo = el.dataset.val; return render(); }
+    if (act === 'calc-add-fila') { state.calc.filas.push({ material: '', valor: '' }); return render(); }
+    if (act === 'calc-del-fila') {
+      state.calc.filas.splice(Number(el.dataset.idx), 1);
+      if (!state.calc.filas.length) state.calc.filas.push({ material: '', valor: '' });
+      return render();
+    }
+    if (act === 'calc-limpiar') { state.calc = blankCalc(); return render(); }
 
     if (act === 'nueva-receta') return goNewRecipe();
     if (act === 'ver-receta') { state.viewId = el.dataset.id; state.tab = 'detalle'; return render(); }
@@ -578,6 +728,24 @@
   app.addEventListener('input', (e) => {
     if (e.target.id === 'searchInput') { state.query = e.target.value; return render(); }
     if (e.target.classList.contains('ing-pct')) return updateIngTotalUI();
+    if (e.target.id === 'calcLote' || e.target.classList.contains('calc-valor')) return recalcCalcUI();
+  });
+
+  app.addEventListener('change', (e) => {
+    if (e.target.id !== 'calcRecetaSelect') return;
+    syncCalcFromDOM();
+    const id = e.target.value;
+    state.calc.recetaId = id;
+    const receta = id ? state.recetas.find((r) => r.id === id) : null;
+    if (receta && receta.ingredientes && receta.ingredientes.length) {
+      state.calc.filas = receta.ingredientes.map((i) => ({
+        material: i.material,
+        valor: state.calc.modo === 'pct2g' && i.porcentaje !== '' && i.porcentaje != null ? i.porcentaje : '',
+      }));
+    } else {
+      state.calc.filas = [{ material: '', valor: '' }];
+    }
+    render();
   });
 
   app.addEventListener('keydown', (e) => {
