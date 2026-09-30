@@ -16,6 +16,7 @@
     image: '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline>',
     book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>',
     percent: '<line x1="19" y1="5" x2="5" y2="19"></line><circle cx="6.5" cy="6.5" r="2.5"></circle><circle cx="17.5" cy="17.5" r="2.5"></circle>',
+    printer: '<polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect>',
   };
   function icon(name, cls) {
     return `<svg class="${cls || ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name] || ''}</svg>`;
@@ -286,6 +287,49 @@
     });
     const totalesEl = document.getElementById('calcTotales');
     if (totalesEl) totalesEl.innerHTML = renderCalcTotales(res, modo);
+  }
+
+  // Genera una ficha imprimible con los datos de la calculadora y abre el
+  // diálogo de impresión del sistema — en iPhone, "Imprimir" permite guardar
+  // directamente como PDF sin necesidad de ninguna librería adicional.
+  function exportCalcPdf() {
+    syncCalcFromDOM();
+    const c = state.calc;
+    const filasValidas = c.filas.filter((f) => f.material && f.material.trim());
+    if (!filasValidas.length) { showToast('Añade al menos un ingrediente'); return; }
+    const res = computeCalcResults(c.modo, c.lote, c.filas);
+    const receta = c.recetaId ? state.recetas.find((r) => r.id === c.recetaId) : null;
+    const modoLabel = c.modo === 'pct2g' ? '% → gramos' : 'Gramos → %';
+    const colValor = c.modo === 'pct2g' ? '%' : 'Gramos';
+    const colResultado = c.modo === 'pct2g' ? 'Gramos' : '%';
+    const rows = c.filas.map((f, i) => {
+      if (!f.material || !f.material.trim()) return '';
+      const r = res.rows[i];
+      const resultado = r && r.resultado != null ? r.resultado : '—';
+      const valor = f.valor === '' || f.valor == null ? '—' : f.valor;
+      return `<tr><td>${esc(f.material)}</td><td>${valor}</td><td>${resultado}</td></tr>`;
+    }).join('');
+    const fecha = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
+    const totalResultadoLabel = res.totalResultado == null ? '—' : res.totalResultado + (c.modo === 'pct2g' ? ' g' : ' %');
+    const printArea = document.getElementById('print-area');
+    printArea.innerHTML = `
+      <div class="print-head">
+        <img class="print-logo" src="assets/en-torno-logo.jpg" alt="">
+        <div>
+          <div class="print-brand">En-Torno · Taller</div>
+          <div class="print-title">Ficha de cálculo (${modoLabel})</div>
+        </div>
+      </div>
+      ${receta ? `<div class="print-sub"><strong>Receta:</strong> ${esc(receta.nombre)}</div>` : ''}
+      ${c.modo === 'pct2g' ? `<div class="print-sub"><strong>Tamaño del lote:</strong> ${c.lote || '—'} g</div>` : ''}
+      <table class="print-table">
+        <thead><tr><th>Material</th><th>${colValor}</th><th>${colResultado}</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><td>Total</td><td>${res.totalValor}${c.modo === 'pct2g' ? '%' : ' g'}</td><td>${totalResultadoLabel}</td></tr></tfoot>
+      </table>
+      <div class="print-date">Generado el ${fecha}</div>
+    `;
+    window.print();
   }
 
   // ---- export to Excel (una fila por receta) -------------------------------
@@ -597,6 +641,8 @@
         </div>
 
         <div class="panel" id="calcTotales">${renderCalcTotales(res, c.modo)}</div>
+
+        <button type="button" class="export-btn" data-act="calc-exportar-pdf">${icon('printer')}<span>Exportar a PDF</span></button>
         <div style="height:24px"></div>
       </div>
     `;
@@ -684,6 +730,7 @@
       return render();
     }
     if (act === 'calc-limpiar') { state.calc = blankCalc(); return render(); }
+    if (act === 'calc-exportar-pdf') return exportCalcPdf();
 
     if (act === 'nueva-receta') return goNewRecipe();
     if (act === 'ver-receta') { state.viewId = el.dataset.id; state.tab = 'detalle'; return render(); }
