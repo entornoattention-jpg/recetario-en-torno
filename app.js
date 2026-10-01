@@ -289,10 +289,41 @@
     if (totalesEl) totalesEl.innerHTML = renderCalcTotales(res, modo);
   }
 
-  // Genera un PDF real en el dispositivo (jsPDF) con los datos de la calculadora
-  // y lo comparte/descarga igual que el Excel. No usamos window.print(): en una
-  // PWA instalada en la pantalla de inicio del iPhone (modo standalone), iOS no
-  // ofrece el diálogo de impresión — window.print() simplemente no hace nada ahí.
+  // ---- generación de PDFs (jsPDF) -------------------------------------------
+  // No usamos window.print(): en una PWA instalada en la pantalla de inicio del
+  // iPhone (modo standalone), iOS no ofrece ahí el diálogo de impresión —
+  // window.print() simplemente no hace nada. Generamos un PDF real en el
+  // dispositivo y lo compartimos/descargamos igual que el Excel.
+  const PDF_LEFT = 20, PDF_RIGHT = 190;
+
+  // Cabecera común (marca + título + línea) para todas las fichas en PDF.
+  // Devuelve la coordenada Y donde puede empezar el contenido.
+  function pdfHeader(doc, title) {
+    let y = 24;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(130, 120, 100);
+    doc.text('EN-TORNO · TALLER', PDF_LEFT, y);
+    y += 9;
+    doc.setFontSize(18);
+    doc.setTextColor(30, 26, 22);
+    doc.text(title, PDF_LEFT, y);
+    y += 4;
+    doc.setDrawColor(30, 26, 22);
+    doc.setLineWidth(0.6);
+    doc.line(PDF_LEFT, y, PDF_RIGHT, y);
+    y += 9;
+    return y;
+  }
+
+  function pdfFecha(doc, y) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(150, 140, 120);
+    const fecha = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
+    doc.text(`Generado el ${fecha}`, PDF_LEFT, y);
+  }
+
   async function exportCalcPdf() {
     syncCalcFromDOM();
     const c = state.calc;
@@ -307,22 +338,8 @@
     const totalResultadoLabel = res.totalResultado == null ? '—' : res.totalResultado + (c.modo === 'pct2g' ? ' g' : ' %');
 
     const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4' });
-    const left = 20, right = 190;
-    let y = 24;
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-    doc.setTextColor(130, 120, 100);
-    doc.text('EN-TORNO · TALLER', left, y);
-    y += 9;
-    doc.setFontSize(18);
-    doc.setTextColor(30, 26, 22);
-    doc.text(`Ficha de calculo (${modoLabel})`, left, y);
-    y += 4;
-    doc.setDrawColor(30, 26, 22);
-    doc.setLineWidth(0.6);
-    doc.line(left, y, right, y);
-    y += 9;
+    const left = PDF_LEFT, right = PDF_RIGHT;
+    let y = pdfHeader(doc, `Ficha de calculo (${modoLabel})`);
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(11);
@@ -368,14 +385,123 @@
     doc.text(totalResultadoLabel, col3, y);
     y += 14;
 
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.setTextColor(150, 140, 120);
-    const fecha = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
-    doc.text(`Generado el ${fecha}`, left, y);
+    pdfFecha(doc, y);
 
     const blob = doc.output('blob');
     const filename = `calculo-en-torno-${new Date().toISOString().slice(0, 10)}.pdf`;
+    await shareOrDownloadFile(blob, filename);
+  }
+
+  // Ficha en PDF de una receta guardada: datos de cocción, ingredientes con %,
+  // etiquetas, notas y la foto de la baldosa si tiene.
+  async function exportRecetaPdf(id) {
+    const r = state.recetas.find((x) => x.id === id);
+    if (!r) return;
+    if (!window.jspdf || !window.jspdf.jsPDF) { showToast('No se pudo cargar el generador de PDF'); return; }
+
+    const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4' });
+    const left = PDF_LEFT, right = PDF_RIGHT;
+    let y = pdfHeader(doc, r.nombre || 'Receta');
+
+    if (r.fotoDataUrl) {
+      try { doc.addImage(r.fotoDataUrl, 'JPEG', right - 45, 24, 45, 33.75, undefined, 'FAST'); } catch (e) { /* imagen no soportada, seguimos sin ella */ }
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(130, 120, 100);
+    doc.text(r.tipo === 'engobe' ? 'ENGOBE' : 'ESMALTE', left, y);
+    y += 9;
+
+    doc.setFontSize(11);
+    [
+      ['Cono / Temp.', r.cono || '—'],
+      ['Atmósfera', cap(r.atmosfera) || '—'],
+      ['Color', r.color || '—'],
+      ['Acabado', cap(r.acabado) || '—'],
+      ['Opacidad', cap(r.opacidad) || '—'],
+    ].forEach(([label, value]) => {
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(120, 110, 95);
+      doc.text(label, left, y);
+      doc.setTextColor(40, 35, 30);
+      doc.text(String(value), left + 55, y);
+      y += 6.5;
+    });
+    y += 4;
+
+    const ingredientes = (r.ingredientes || []).filter((i) => i.material);
+    if (ingredientes.length) {
+      if (y > 260) { doc.addPage(); y = 24; }
+      doc.setFillColor(238, 232, 220);
+      doc.rect(left, y - 5, right - left, 8, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(30, 26, 22);
+      doc.text('Ingrediente', left + 2, y);
+      doc.text('%', right - 22, y);
+      y += 8;
+
+      doc.setFont('helvetica', 'normal');
+      let total = 0;
+      ingredientes.forEach((ing) => {
+        if (y > 275) { doc.addPage(); y = 24; }
+        const tienePct = ing.porcentaje !== '' && ing.porcentaje != null;
+        if (tienePct) total += parseFloat(ing.porcentaje) || 0;
+        doc.setDrawColor(225, 217, 200);
+        doc.setLineWidth(0.2);
+        doc.line(left, y - 5, right, y - 5);
+        doc.text(String(ing.material), left + 2, y);
+        doc.text(tienePct ? `${ing.porcentaje}%` : '—', right - 22, y);
+        y += 7;
+      });
+      y += 1;
+      doc.setDrawColor(30, 26, 22);
+      doc.setLineWidth(0.5);
+      doc.line(left, y - 5, right, y - 5);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Total', left + 2, y);
+      doc.text(`${Math.round(total * 10) / 10}%`, right - 22, y);
+      y += 13;
+    }
+
+    if (r.etiquetas && r.etiquetas.length) {
+      if (y > 270) { doc.addPage(); y = 24; }
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(130, 120, 100);
+      doc.text('ETIQUETAS', left, y);
+      y += 6;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.setTextColor(40, 35, 30);
+      doc.text(r.etiquetas.join(', '), left, y);
+      y += 10;
+    }
+
+    if (r.notas) {
+      if (y > 265) { doc.addPage(); y = 24; }
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(130, 120, 100);
+      doc.text('NOTAS', left, y);
+      y += 6;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10.5);
+      doc.setTextColor(40, 35, 30);
+      doc.splitTextToSize(r.notas, right - left).forEach((line) => {
+        if (y > 280) { doc.addPage(); y = 24; }
+        doc.text(line, left, y);
+        y += 6;
+      });
+      y += 3;
+    }
+
+    if (y > 280) { doc.addPage(); y = 24; }
+    pdfFecha(doc, y);
+
+    const blob = doc.output('blob');
+    const filename = `${(r.nombre || 'receta').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'receta'}.pdf`;
     await shareOrDownloadFile(blob, filename);
   }
 
@@ -580,6 +706,7 @@
           <button class="btn-secondary" data-act="duplicar-receta" data-id="${r.id}">${icon('copy')}<span>Duplicar</span></button>
           <button class="btn-secondary" data-act="editar-receta" data-id="${r.id}">${icon('edit')}<span>Editar</span></button>
         </div>
+        <button type="button" class="export-btn" data-act="exportar-receta-pdf" data-id="${r.id}">${icon('printer')}<span>Exportar a PDF</span></button>
         <div style="height:24px"></div>
       </div>
     `;
@@ -842,6 +969,7 @@
     if (act === 'ver-receta') { state.viewId = el.dataset.id; state.tab = 'detalle'; return render(); }
     if (act === 'editar-receta') return goEditRecipe(el.dataset.id);
     if (act === 'duplicar-receta') return void duplicateRecipe(el.dataset.id);
+    if (act === 'exportar-receta-pdf') return void exportRecetaPdf(el.dataset.id);
     if (act === 'borrar-receta') return void deleteRecipe(el.dataset.id);
     if (act === 'volver') {
       state.form = null;
